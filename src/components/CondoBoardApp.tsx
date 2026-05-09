@@ -206,26 +206,45 @@ export default function App() {
     r.start(); recRef.current = r; setListening(true);
   };
 
+  const engineRef = useRef<MLCEngine | null>(null);
+  const [progress, setProgress] = useState("");
+  const MODEL_ID = "Llama-3.2-3B-Instruct-q4f32_1-MLC";
+
+  const ensureEngine = async () => {
+    if (engineRef.current) return engineRef.current;
+    const webllm = await import("@mlc-ai/web-llm");
+    if (typeof navigator === "undefined" || !(navigator as any).gpu) {
+      throw new Error("Your browser doesn't support WebGPU. Please use the latest Chrome or Edge on desktop.");
+    }
+    setProgress("Loading AI model (first time only, ~2GB cached)…");
+    const engine = await webllm.CreateMLCEngine(MODEL_ID, {
+      initProgressCallback: (r: any) => setProgress(r.text || `Loading… ${(r.progress * 100).toFixed(0)}%`),
+    });
+    engineRef.current = engine;
+    return engine;
+  };
+
   const generate = async () => {
     if (!transcript.trim()) return;
-    setStep("loading"); setError("");
+    setStep("loading"); setError(""); setProgress("Initializing…");
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1000,
-          system: SYSTEM,
-          messages: [{ role: "user", content: `Extract meeting minutes from this transcript:\n\n${transcript}` }]
-        })
+      const engine = await ensureEngine();
+      setProgress("Reading transcript and extracting minutes…");
+      const reply = await engine.chat.completions.create({
+        messages: [
+          { role: "system", content: SYSTEM },
+          { role: "user", content: `Extract meeting minutes from this transcript:\n\n${transcript}` },
+        ],
+        temperature: 0.2,
+        response_format: { type: "json_object" },
       });
-      const data = await res.json();
-      const raw = data.content?.[0]?.text || "";
-      const parsed = JSON.parse(raw.replace(/```json|```/g,"").trim());
+      const raw = reply.choices?.[0]?.message?.content || "";
+      const cleaned = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(cleaned);
       setMinutes(parsed); setStep("review");
-    } catch(e) {
-      setError("Could not process the transcript. Please check it and try again.");
+    } catch (e: any) {
+      console.error(e);
+      setError(e?.message || "Could not process the transcript. Please check it and try again.");
       setStep("input");
     }
   };
