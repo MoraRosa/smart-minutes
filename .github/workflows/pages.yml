@@ -21,10 +21,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install --frozen-lockfile
+      - name: Compute BASE_PATH
+        id: basepath
+        run: |
+          if [ -n "${{ vars.BASE_PATH }}" ]; then
+            echo "value=${{ vars.BASE_PATH }}" >> $GITHUB_OUTPUT
+          else
+            REPO_NAME="${GITHUB_REPOSITORY#*/}"
+            if [ "$REPO_NAME" = "${{ github.repository_owner }}.github.io" ]; then
+              echo "value=/" >> $GITHUB_OUTPUT
+            else
+              echo "value=/${REPO_NAME}/" >> $GITHUB_OUTPUT
+            fi
+          fi
       - name: Build
         env:
-          # Set this to "/<repo-name>/" if hosting at user.github.io/<repo-name>/
-          BASE_PATH: ${{ vars.BASE_PATH || '/' }}
+          BASE_PATH: ${{ steps.basepath.outputs.value }}
         run: bun run build:pages
       - name: Fix SPA fallback
         run: cp dist-pages/pages/index.html dist-pages/index.html && cp dist-pages/index.html dist-pages/404.html
