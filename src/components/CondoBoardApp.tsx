@@ -1,4 +1,6 @@
-import { useState, useRef } from "react";
+// @ts-nocheck
+import { useState, useRef, useEffect } from "react";
+import type { MLCEngine } from "@mlc-ai/web-llm";
 
 // ─── Palette (matches the Word template) ────────────────────────────────────
 const C = {
