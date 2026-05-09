@@ -1,26 +1,26 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
+import CondoBoardApp from "@/components/CondoBoardApp";
 
 export const Route = createFileRoute("/")({
   component: Index,
+  head: () => ({
+    meta: [
+      { title: "Condo Board Minutes — AI Generator" },
+      { name: "description", content: "Paste a meeting transcript and get formatted condo board minutes — runs entirely in your browser with WebLLM." },
+    ],
+  }),
 });
 
-// IMPORTANT: Replace this placeholder. For sites with multiple pages (About, Services, Contact, etc.),
-// create separate route files (about.tsx, services.tsx, contact.tsx) — don't put all pages in this file.
-function PlaceholderIndex() {
-  return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
-    </div>
-  );
-}
-
 function Index() {
-  return <PlaceholderIndex />;
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) {
+    return (
+      <div style={{ minHeight: "100vh", background: "#F0F3F8", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "sans-serif", color: "#4A5568" }}>
+        Loading…
+      </div>
+    );
+  }
+  return <CondoBoardApp />;
 }
