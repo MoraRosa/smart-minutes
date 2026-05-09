@@ -282,7 +282,7 @@ export default function App() {
           borderTopColor:C.navy, animation:"spin 0.8s linear infinite", margin:"0 auto 20px"}}/>
         <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
         <p style={{fontSize:17, fontWeight:700, color:C.navy, margin:"0 0 6px",fontFamily:"'Playfair Display',serif"}}>Generating Minutes</p>
-        <p style={{fontSize:13, color:C.slateL, margin:0}}>AI is reading the transcript…</p>
+        <p style={{fontSize:13, color:C.slateL, margin:0, maxWidth:360, padding:"0 20px"}}>{progress || "AI is reading the transcript…"}</p>
       </div>
     </div>
   );
