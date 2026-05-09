@@ -236,11 +236,15 @@ export default function App() {
           { role: "user", content: `Extract meeting minutes from this transcript:\n\n${transcript}` },
         ],
         temperature: 0.2,
-        response_format: { type: "json_object" },
       });
       const raw = reply.choices?.[0]?.message?.content || "";
-      const cleaned = raw.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(cleaned);
+      // Extract JSON object from response (model may wrap in ```json fences or prose)
+      const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+      let jsonStr = fenced ? fenced[1] : raw;
+      const start = jsonStr.indexOf("{");
+      const end = jsonStr.lastIndexOf("}");
+      if (start !== -1 && end !== -1) jsonStr = jsonStr.slice(start, end + 1);
+      const parsed = JSON.parse(jsonStr.trim());
       setMinutes(parsed); setStep("review");
     } catch (e: any) {
       console.error(e);
