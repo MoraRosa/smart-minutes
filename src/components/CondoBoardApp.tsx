@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { MLCEngine } from "@mlc-ai/web-llm";
 
 const C = {
@@ -165,9 +165,55 @@ export default function CondoBoardApp() {
   const [error,      setError]      = useState("");
   const [progress,   setProgress]   = useState("");
   const [listening,  setListening]  = useState(false);
+  const [gpuStatus,  setGpuStatus]  = useState({ checked: false, supported: true, message: "" });
   const recRef = useRef(null);
   const engineRef = useRef<MLCEngine | null>(null);
   const MODEL_ID = "Llama-3.2-3B-Instruct-q4f32_1-MLC";
+
+  const checkWebGPU = async () => {
+    if (typeof navigator === "undefined") {
+      return { supported: false, message: "This app only runs in a browser." };
+    }
+
+    if (!(navigator as any).gpu) {
+      return {
+        supported: false,
+        message:
+          "WebLLM needs WebGPU, and this browser does not expose it. Try the latest Chrome or Edge on desktop with hardware acceleration enabled.",
+      };
+    }
+
+    try {
+      const adapter = await (navigator as any).gpu.requestAdapter();
+      if (!adapter) {
+        return {
+          supported: false,
+          message:
+            "WebGPU is present, but no compatible GPU adapter is available on this device. This laptop/browser cannot run the local AI model right now.",
+        };
+      }
+      return { supported: true, message: "" };
+    } catch {
+      return {
+        supported: false,
+        message:
+          "This browser could not initialize WebGPU. Try Chrome or Edge, make sure hardware acceleration is on, and test again on a device with GPU support.",
+      };
+    }
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    void (async () => {
+      const result = await checkWebGPU();
+      if (active) setGpuStatus({ checked: true, ...result });
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const toggleMic = () => {
     if (listening){recRef.current?.stop();setListening(false);return;}
@@ -181,8 +227,9 @@ export default function CondoBoardApp() {
   const ensureEngine = async () => {
     if (engineRef.current) return engineRef.current;
     const webllm = await import("@mlc-ai/web-llm");
-    if (typeof navigator === "undefined" || !(navigator as any).gpu) {
-      throw new Error("Your browser doesn't support WebGPU. Please use the latest Chrome or Edge on desktop.");
+    const support = await checkWebGPU();
+    if (!support.supported) {
+      throw new Error(support.message);
     }
     setProgress("Loading AI model (first time only, ~2GB cached)…");
     const engine = await webllm.CreateMLCEngine(MODEL_ID, {
@@ -268,13 +315,17 @@ export default function CondoBoardApp() {
             style={{width:"100%",minHeight:300,border:"1.5px solid #CBD5E0",borderRadius:8,padding:"12px 14px",fontSize:13,color:C.slate,resize:"vertical",lineHeight:1.7,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}
             placeholder={`Paste the meeting transcript here…\n\nThe AI will extract attendees, motions, votes, financial details, and action items — formatted into polished board minutes. Sections with no content are automatically omitted.`}
           />
+          {!gpuStatus.supported && gpuStatus.checked && <div style={{marginTop:12,background:"#FFFAF0",border:"1.5px solid #F6AD55",borderRadius:8,padding:"12px 16px"}}>
+            <p style={{fontWeight:700,color:"#9C4221",margin:"0 0 5px",fontSize:13}}>WebLLM unavailable on this device</p>
+            <p style={{color:"#9C4221",fontSize:12,margin:0,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{gpuStatus.message}</p>
+          </div>}
           {error&&<div style={{marginTop:12,background:"#FFF5F5",border:"1.5px solid #FC8181",borderRadius:8,padding:"12px 16px"}}>
             <p style={{fontWeight:700,color:C.red,margin:"0 0 5px",fontSize:13}}>⚠ Error</p>
             <p style={{color:C.red,fontSize:12,margin:0,fontFamily:"monospace",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{error}</p>
           </div>}
           <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:16}}>
             <Btn onClick={()=>setTranscript("")} variant="outline">Clear</Btn>
-            <Btn onClick={generate} disabled={!transcript.trim()} variant="navy">Generate Minutes →</Btn>
+            <Btn onClick={generate} disabled={!transcript.trim() || (gpuStatus.checked && !gpuStatus.supported)} variant="navy">Generate Minutes →</Btn>
           </div>
         </div>
       </div>
