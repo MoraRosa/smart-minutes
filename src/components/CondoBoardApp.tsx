@@ -169,6 +169,7 @@ export default function CondoBoardApp() {
   const [progress,   setProgress]   = useState("");
   const [listening,  setListening]  = useState(false);
   const [gpuStatus,  setGpuStatus]  = useState({ checked: false, supported: true, message: "" });
+  const [engineMode, setEngineMode] = useState<EngineMode>("auto");
   const recRef = useRef(null);
   const engineRef = useRef<MLCEngine | null>(null);
   const MODEL_ID = "Llama-3.2-3B-Instruct-q4f32_1-MLC";
