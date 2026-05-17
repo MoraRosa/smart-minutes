@@ -1,6 +1,9 @@
 // @ts-nocheck
 import { useEffect, useRef, useState } from "react";
 import type { MLCEngine } from "@mlc-ai/web-llm";
+import { extractRuleBased, extractWithTransformers } from "@/lib/minutes-extractors";
+
+type EngineMode = "auto" | "webllm" | "transformers" | "rules";
 
 const C = {
   navy:"#1B2B4B", gold:"#C9A84C", goldLt:"#E8C97A",
@@ -166,6 +169,7 @@ export default function CondoBoardApp() {
   const [progress,   setProgress]   = useState("");
   const [listening,  setListening]  = useState(false);
   const [gpuStatus,  setGpuStatus]  = useState({ checked: false, supported: true, message: "" });
+  const [engineMode, setEngineMode] = useState<EngineMode>("auto");
   const recRef = useRef(null);
   const engineRef = useRef<MLCEngine | null>(null);
   const MODEL_ID = "Llama-3.2-3B-Instruct-q4f32_1-MLC";
@@ -239,26 +243,42 @@ export default function CondoBoardApp() {
     return engine;
   };
 
+  const runWebLLM = async () => {
+    const engine = await ensureEngine();
+    setProgress("Reading transcript and extracting minutes…");
+    const reply = await engine.chat.completions.create({
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: `Extract meeting minutes from this transcript:\n\n${transcript}` },
+      ],
+      temperature: 0.2,
+    });
+    const raw = reply.choices?.[0]?.message?.content || "";
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+    let jsonStr = fenced ? fenced[1] : raw;
+    const start = jsonStr.indexOf("{");
+    const end = jsonStr.lastIndexOf("}");
+    if (start !== -1 && end !== -1) jsonStr = jsonStr.slice(start, end + 1);
+    return JSON.parse(jsonStr.trim());
+  };
+
   const generate = async () => {
     if(!transcript.trim())return;
-    setStep("loading");setError("");setProgress("Initializing…");
+    setStep("loading"); setError(""); setProgress("Initializing…");
     try {
-      const engine = await ensureEngine();
-      setProgress("Reading transcript and extracting minutes…");
-      const reply = await engine.chat.completions.create({
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: `Extract meeting minutes from this transcript:\n\n${transcript}` },
-        ],
-        temperature: 0.2,
-      });
-      const raw = reply.choices?.[0]?.message?.content || "";
-      const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-      let jsonStr = fenced ? fenced[1] : raw;
-      const start = jsonStr.indexOf("{");
-      const end = jsonStr.lastIndexOf("}");
-      if (start !== -1 && end !== -1) jsonStr = jsonStr.slice(start, end + 1);
-      const parsed = JSON.parse(jsonStr.trim());
+      let parsed: any;
+      const mode: EngineMode = engineMode === "auto"
+        ? (gpuStatus.checked && gpuStatus.supported ? "webllm" : "rules")
+        : engineMode;
+
+      if (mode === "webllm") {
+        parsed = await runWebLLM();
+      } else if (mode === "transformers") {
+        parsed = await extractWithTransformers(transcript, setProgress);
+      } else {
+        setProgress("Extracting minutes from transcript…");
+        parsed = extractRuleBased(transcript);
+      }
       setMinutes(parsed); setStep("review");
     } catch(e:any){
       console.error(e);
@@ -315,9 +335,29 @@ export default function CondoBoardApp() {
             style={{width:"100%",minHeight:300,border:"1.5px solid #CBD5E0",borderRadius:8,padding:"12px 14px",fontSize:13,color:C.slate,resize:"vertical",lineHeight:1.7,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}
             placeholder={`Paste the meeting transcript here…\n\nThe AI will extract attendees, motions, votes, financial details, and action items — formatted into polished board minutes. Sections with no content are automatically omitted.`}
           />
+          {/* Engine selector */}
+          <div style={{marginTop:14,background:"#F7FAFC",border:"1px solid #E2E8F0",borderRadius:8,padding:"12px 14px"}}>
+            <p style={{fontFamily:"Georgia,serif",fontSize:12,fontWeight:700,color:C.navy,margin:"0 0 8px",letterSpacing:0.5}}>EXTRACTION ENGINE</p>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8}}>
+              {[
+                {id:"auto",         t:"Auto",            d:"Best available"},
+                {id:"webllm",       t:"WebLLM (GPU)",    d:gpuStatus.checked && !gpuStatus.supported ? "Unavailable" : "Best quality • ~2GB"},
+                {id:"transformers", t:"Transformers.js", d:"AI on CPU • ~250MB"},
+                {id:"rules",        t:"Rule-based",      d:"Instant • no AI"},
+              ].map((o:any)=>{
+                const disabled = o.id==="webllm" && gpuStatus.checked && !gpuStatus.supported;
+                const active = engineMode===o.id;
+                return <button key={o.id} disabled={disabled} onClick={()=>setEngineMode(o.id as EngineMode)}
+                  style={{textAlign:"left",padding:"8px 10px",borderRadius:6,cursor:disabled?"not-allowed":"pointer",border:`1.5px solid ${active?C.navy:"#CBD5E0"}`,background:active?"#EBF0F7":disabled?"#F7FAFC":"white",opacity:disabled?0.5:1,fontFamily:"inherit"}}>
+                  <div style={{fontSize:12,fontWeight:700,color:C.navy}}>{o.t}</div>
+                  <div style={{fontSize:11,color:C.slateL,marginTop:2}}>{o.d}</div>
+                </button>;
+              })}
+            </div>
+          </div>
           {!gpuStatus.supported && gpuStatus.checked && <div style={{marginTop:12,background:"#FFFAF0",border:"1.5px solid #F6AD55",borderRadius:8,padding:"12px 16px"}}>
-            <p style={{fontWeight:700,color:"#9C4221",margin:"0 0 5px",fontSize:13}}>WebLLM unavailable on this device</p>
-            <p style={{color:"#9C4221",fontSize:12,margin:0,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{gpuStatus.message}</p>
+            <p style={{fontWeight:700,color:"#9C4221",margin:"0 0 5px",fontSize:13}}>WebLLM unavailable — using fallback</p>
+            <p style={{color:"#9C4221",fontSize:12,margin:0,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{gpuStatus.message} Choose <strong>Transformers.js</strong> for AI-on-CPU, or <strong>Rule-based</strong> for an instant offline extract.</p>
           </div>}
           {error&&<div style={{marginTop:12,background:"#FFF5F5",border:"1.5px solid #FC8181",borderRadius:8,padding:"12px 16px"}}>
             <p style={{fontWeight:700,color:C.red,margin:"0 0 5px",fontSize:13}}>⚠ Error</p>
@@ -325,7 +365,7 @@ export default function CondoBoardApp() {
           </div>}
           <div style={{display:"flex",justifyContent:"flex-end",gap:10,marginTop:16}}>
             <Btn onClick={()=>setTranscript("")} variant="outline">Clear</Btn>
-            <Btn onClick={generate} disabled={!transcript.trim() || (gpuStatus.checked && !gpuStatus.supported)} variant="navy">Generate Minutes →</Btn>
+            <Btn onClick={generate} disabled={!transcript.trim()} variant="navy">Generate Minutes →</Btn>
           </div>
         </div>
       </div>
