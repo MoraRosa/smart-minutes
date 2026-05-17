@@ -1,6 +1,9 @@
 // @ts-nocheck
 import { useEffect, useRef, useState } from "react";
 import type { MLCEngine } from "@mlc-ai/web-llm";
+import { extractRuleBased, extractWithTransformers } from "@/lib/minutes-extractors";
+
+type EngineMode = "auto" | "webllm" | "transformers" | "rules";
 
 const C = {
   navy:"#1B2B4B", gold:"#C9A84C", goldLt:"#E8C97A",
