@@ -243,26 +243,42 @@ export default function CondoBoardApp() {
     return engine;
   };
 
+  const runWebLLM = async () => {
+    const engine = await ensureEngine();
+    setProgress("Reading transcript and extracting minutes…");
+    const reply = await engine.chat.completions.create({
+      messages: [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: `Extract meeting minutes from this transcript:\n\n${transcript}` },
+      ],
+      temperature: 0.2,
+    });
+    const raw = reply.choices?.[0]?.message?.content || "";
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+    let jsonStr = fenced ? fenced[1] : raw;
+    const start = jsonStr.indexOf("{");
+    const end = jsonStr.lastIndexOf("}");
+    if (start !== -1 && end !== -1) jsonStr = jsonStr.slice(start, end + 1);
+    return JSON.parse(jsonStr.trim());
+  };
+
   const generate = async () => {
     if(!transcript.trim())return;
-    setStep("loading");setError("");setProgress("Initializing…");
+    setStep("loading"); setError(""); setProgress("Initializing…");
     try {
-      const engine = await ensureEngine();
-      setProgress("Reading transcript and extracting minutes…");
-      const reply = await engine.chat.completions.create({
-        messages: [
-          { role: "system", content: SYSTEM },
-          { role: "user", content: `Extract meeting minutes from this transcript:\n\n${transcript}` },
-        ],
-        temperature: 0.2,
-      });
-      const raw = reply.choices?.[0]?.message?.content || "";
-      const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-      let jsonStr = fenced ? fenced[1] : raw;
-      const start = jsonStr.indexOf("{");
-      const end = jsonStr.lastIndexOf("}");
-      if (start !== -1 && end !== -1) jsonStr = jsonStr.slice(start, end + 1);
-      const parsed = JSON.parse(jsonStr.trim());
+      let parsed: any;
+      const mode: EngineMode = engineMode === "auto"
+        ? (gpuStatus.checked && gpuStatus.supported ? "webllm" : "rules")
+        : engineMode;
+
+      if (mode === "webllm") {
+        parsed = await runWebLLM();
+      } else if (mode === "transformers") {
+        parsed = await extractWithTransformers(transcript, setProgress);
+      } else {
+        setProgress("Extracting minutes from transcript…");
+        parsed = extractRuleBased(transcript);
+      }
       setMinutes(parsed); setStep("review");
     } catch(e:any){
       console.error(e);
