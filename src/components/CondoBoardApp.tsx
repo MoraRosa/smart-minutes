@@ -378,7 +378,7 @@ export default function CondoBoardApp() {
     try {
       const source = transcript.trim();
       const mode: EngineMode = engineMode === "auto"
-        ? (gpuStatus.checked && gpuStatus.supported ? "webllm" : "rules")
+        ? (gpuStatus.checked && gpuStatus.supported ? "webllm" : "transformers")
         : engineMode;
       const parsed = await extractWithFallbacks(source, mode);
       setMinutes(parsed); setStep("review");
@@ -461,6 +461,10 @@ export default function CondoBoardApp() {
             <p style={{fontWeight:700,color:"#9C4221",margin:"0 0 5px",fontSize:13}}>WebLLM unavailable — using fallback</p>
             <p style={{color:"#9C4221",fontSize:12,margin:0,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{gpuStatus.message} Choose <strong>Transformers.js</strong> for AI-on-CPU, or <strong>Rule-based</strong> for an instant offline extract.</p>
           </div>}
+          {engineNotice&&<div style={{marginTop:12,background:"#F7FAFC",border:"1.5px solid #CBD5E0",borderRadius:8,padding:"12px 16px"}}>
+            <p style={{fontWeight:700,color:C.navy,margin:"0 0 5px",fontSize:13}}>Current engine</p>
+            <p style={{color:C.slate,fontSize:12,margin:0,whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{engineNotice}</p>
+          </div>}
           {error&&<div style={{marginTop:12,background:"#FFF5F5",border:"1.5px solid #FC8181",borderRadius:8,padding:"12px 16px"}}>
             <p style={{fontWeight:700,color:C.red,margin:"0 0 5px",fontSize:13}}>⚠ Error</p>
             <p style={{color:C.red,fontSize:12,margin:0,fontFamily:"monospace",whiteSpace:"pre-wrap",wordBreak:"break-word"}}>{error}</p>
@@ -485,6 +489,10 @@ export default function CondoBoardApp() {
           <Btn onClick={()=>exportPDF(m)}  variant="gold">⬇ PDF</Btn>
         </AppBar>
         <div style={{maxWidth:780,margin:"0 auto",padding:"24px 20px 48px"}}>
+          {engineNotice&&<div style={{background:"#F7FAFC",border:"1px solid #CBD5E0",borderRadius:8,padding:"12px 16px",marginBottom:16}}>
+            <p style={{fontSize:12,fontWeight:700,color:C.navy,margin:"0 0 4px"}}>Generated locally</p>
+            <p style={{fontSize:12,color:C.slate,margin:0}}>{engineNotice}</p>
+          </div>}
           <div style={{background:"white",borderRadius:10,boxShadow:"0 1px 6px rgba(0,0,0,0.07)",overflow:"hidden"}}>
 
             <div style={{background:C.navy,padding:"22px 28px",textAlign:"center"}}>
