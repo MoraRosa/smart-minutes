@@ -166,13 +166,59 @@ export default function CondoBoardApp() {
   const [step,       setStep]       = useState("input");
   const [minutes,    setMinutes]    = useState(null);
   const [error,      setError]      = useState("");
+  const [engineNotice, setEngineNotice] = useState("");
   const [progress,   setProgress]   = useState("");
   const [listening,  setListening]  = useState(false);
   const [gpuStatus,  setGpuStatus]  = useState({ checked: false, supported: true, message: "" });
   const [engineMode, setEngineMode] = useState<EngineMode>("auto");
   const recRef = useRef(null);
   const engineRef = useRef<MLCEngine | null>(null);
-  const MODEL_ID = "Llama-3.2-3B-Instruct-q4f32_1-MLC";
+  const loadedModelRef = useRef<string | null>(null);
+  const WEBLLM_MODEL_IDS = [
+    "Llama-3.2-1B-Instruct-q4f16_1-MLC",
+    "Llama-3.2-1B-Instruct-q4f32_1-MLC",
+  ] as const;
+
+  const getErrorText = (value: unknown) => {
+    if (value instanceof Error) return value.message;
+    return typeof value === "string" ? value : "";
+  };
+
+  const isGpuRecoverableError = (value: unknown) => {
+    const text = getErrorText(value).toLowerCase();
+    return [
+      "device was lost",
+      "device lost",
+      "dxgi_error_device_hung",
+      "buffer was unmapped before mapping was resolved",
+      "failed to fetch",
+      "networkerror",
+      "oom",
+      "out of memory",
+      "insufficient memory",
+    ].some((token) => text.includes(token));
+  };
+
+  const friendlyEngineError = (value: unknown) => {
+    const text = getErrorText(value);
+    if (!text) return "Could not process the transcript.";
+    if (isGpuRecoverableError(value)) {
+      return "WebLLM hit a GPU memory/device limit on this machine, so the app switched away from the heavy GPU path.";
+    }
+    return text;
+  };
+
+  const resetEngine = async (skipUnload = false) => {
+    const current = engineRef.current;
+    engineRef.current = null;
+    loadedModelRef.current = null;
+    if (!current || skipUnload) return;
+    try {
+      await current.unload?.();
+    } catch {
+      // Ignore cleanup errors from already-lost WebGPU devices.
+    }
+  };
 
   const checkWebGPU = async () => {
     if (typeof navigator === "undefined") {
@@ -235,23 +281,39 @@ export default function CondoBoardApp() {
     if (!support.supported) {
       throw new Error(support.message);
     }
-    setProgress("Loading AI model (first time only, ~2GB cached)…");
-    const engine = await webllm.CreateMLCEngine(MODEL_ID, {
-      initProgressCallback: (r: any) => setProgress(r.text || `Loading… ${(r.progress * 100).toFixed(0)}%`),
-    });
-    engineRef.current = engine;
-    return engine;
+
+    let lastError: unknown;
+    for (const modelId of WEBLLM_MODEL_IDS) {
+      try {
+        setProgress(`Loading local AI model (${modelId.includes("q4f16") ? "lighter" : "fallback"} profile, first time only)…`);
+        const engine = await webllm.CreateMLCEngine(modelId, {
+          initProgressCallback: (r: any) => setProgress(r.text || `Loading… ${(r.progress * 100).toFixed(0)}%`),
+        });
+        engineRef.current = engine;
+        loadedModelRef.current = modelId;
+        return engine;
+      } catch (err) {
+        lastError = err;
+        await resetEngine(isGpuRecoverableError(err));
+        if (!isGpuRecoverableError(err)) break;
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("WebLLM could not load a compatible local model.");
   };
 
-  const runWebLLM = async () => {
+  const runWebLLM = async (input: string) => {
     const engine = await ensureEngine();
     setProgress("Reading transcript and extracting minutes…");
     const reply = await engine.chat.completions.create({
       messages: [
         { role: "system", content: SYSTEM },
-        { role: "user", content: `Extract meeting minutes from this transcript:\n\n${transcript}` },
+        { role: "user", content: `Extract meeting minutes from this transcript:\n\n${input}` },
       ],
       temperature: 0.2,
+    }).catch(async (err: unknown) => {
+      await resetEngine(isGpuRecoverableError(err));
+      throw err;
     });
     const raw = reply.choices?.[0]?.message?.content || "";
     const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -262,27 +324,67 @@ export default function CondoBoardApp() {
     return JSON.parse(jsonStr.trim());
   };
 
+  const runRuleExtractor = (input: string) => {
+    setProgress("Extracting minutes from transcript…");
+    return extractRuleBased(input);
+  };
+
+  const extractWithFallbacks = async (input: string, preferredMode: EngineMode) => {
+    const modes: EngineMode[] = preferredMode === "webllm"
+      ? ["webllm", "transformers", "rules"]
+      : preferredMode === "transformers"
+        ? ["transformers", "rules"]
+        : ["rules"];
+
+    const failures: string[] = [];
+    for (const mode of modes) {
+      try {
+        if (mode === "webllm") {
+          const parsed = await runWebLLM(input);
+          const modelLabel = loadedModelRef.current?.includes("q4f16") ? "lighter 1B WebLLM model" : "1B WebLLM fallback model";
+          setEngineNotice(`Generated with ${modelLabel} for better laptop compatibility.`);
+          return parsed;
+        }
+        if (mode === "transformers") {
+          const parsed = await extractWithTransformers(input, setProgress);
+          setEngineNotice("WebLLM was unavailable, so the app switched to Transformers.js on CPU.");
+          return parsed;
+        }
+        const parsed = runRuleExtractor(input);
+        setEngineNotice(preferredMode === "rules"
+          ? "Generated with the instant rule-based extractor."
+          : "AI model loading failed, so the app finished with the instant rule-based fallback.");
+        return parsed;
+      } catch (err) {
+        failures.push(`${mode}: ${friendlyEngineError(err)}`);
+        if (mode === "webllm") {
+          setProgress("WebLLM hit a device limit. Falling back…");
+          continue;
+        }
+        if (mode === "transformers") {
+          setProgress("CPU AI is unavailable. Falling back to rule-based extraction…");
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    throw new Error(failures[failures.length - 1] || "Could not process the transcript.");
+  };
+
   const generate = async () => {
     if(!transcript.trim())return;
-    setStep("loading"); setError(""); setProgress("Initializing…");
+    setStep("loading"); setError(""); setEngineNotice(""); setProgress("Initializing…");
     try {
-      let parsed: any;
+      const source = transcript.trim();
       const mode: EngineMode = engineMode === "auto"
         ? (gpuStatus.checked && gpuStatus.supported ? "webllm" : "rules")
         : engineMode;
-
-      if (mode === "webllm") {
-        parsed = await runWebLLM();
-      } else if (mode === "transformers") {
-        parsed = await extractWithTransformers(transcript, setProgress);
-      } else {
-        setProgress("Extracting minutes from transcript…");
-        parsed = extractRuleBased(transcript);
-      }
+      const parsed = await extractWithFallbacks(source, mode);
       setMinutes(parsed); setStep("review");
     } catch(e:any){
       console.error(e);
-      setError(e?.message || "Could not process the transcript.");
+      setError(friendlyEngineError(e));
       setStep("input");
     }
   };
